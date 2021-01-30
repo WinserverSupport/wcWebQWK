@@ -1,0 +1,51 @@
+<html>
+<head>
+<style>
+.font       { font-family: arial, verdana, tahoma; font-size: 10pt;}
+.bold       { font-weight: bold; }
+.padding    { padding: 2px; }
+.border     { border: 1px solid black; }
+.tblQwk     { border-collapse: collapse; background: AliceBlue; }
+.caption    { background: steelblue; color: white; }
+.error      { background: red; color: yellow; }
+</style>
+<script>
+function submitQwkPtr()
+{
+  var frm = document.forms["inputForm"];
+  if (frm.qwkptr.value == "") {
+      alert("enter a PTR file name");
+      return false;
+  }
+  return confirm("Upload PTR file?");
+}
+</script>
+</head>
+<body>
+
+<form name="inputForm"
+      enctype="multipart/form-data"
+      method="post"
+      action="/code/html-qwkptr"
+      onSubmit="return submitQwkPtr();">
+<table  border="0" class="tblQwk bold border font">
+<caption class="caption border">Reset your QWK Pointers</caption>
+@if Error.Msg@
+ <tr>
+ <td class="padding"><h3 class="border error">@SUB Error.Msg@</h3></td>
+ </tr>
+@endif@
+ <tr>
+ <td class="padding">Enter your <b>@SYSTEM.PACKETID@.PTR</b> file:</td>
+ </tr>
+ <tr>
+ <td class="padding">
+ <input type="file"  size="50" value="@sub qwkptr@" name="qwkptr"/>
+ <input type="submit" value="Upload"/>
+ </td>
+ </tr>
+</table>
+</form>
+
+</body>
+</html>

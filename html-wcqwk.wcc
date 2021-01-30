@@ -1,0 +1,441 @@
+//***********************************************************************
+// (c) Copyright 1999-2008 Santronics Software, Inc. All Rights Reserved.
+// This WCBASIC source is copyrighted by Santronics Software Inc. Any
+// modification made to this source must retain this copyright statement.
+//-----------------------------------------------------------------------
+// File Name : html-wcqwk.wcc
+// Subsystem : wcweb QWK sub system
+// Date      : 03/22/2000
+// Author    : SSI
+// About Me  :
+//
+// Revision History:
+// Build  Date     Author  Comments
+// -----  -------- ------  -------------------------------
+//***********************************************************************
+
+#include "cmdline.wch"
+#include "dispfile.wch"
+#include "executil.wch"
+#include "msgutil.wch"
+#include "newfiles.wch"
+//#include "protutil.wch"
+#include "usersett.wch"
+#include "util.wch"
+#include "windows.wch"
+#include "htmlutil.wch"
+#include "strlib.wch"
+
+sub CopyDisplayFile(byval src as string, byval dest as string)
+  dim inf as integer = open src for input
+  if inf > 0 then
+    dim outf as integer = open dest for append
+    if outf > 0 then
+      dim IfsecStack() as boolean
+      dim IfsecStackTop as integer = 0
+      dim IfsecDisable as integer = 0
+      do while not eof(inf)
+        dim s as string
+        input #inf, s
+        if left(s, 7) = "@IFSEC=" then
+          dim p as string = ucase(mid(s, 8))
+          if instr(p, "@") then
+            p = left(p, instr(p, "@")-1)
+          end if
+          dim match as boolean = False
+          dim i as integer
+          for i = 1 to 10
+            if p = ucase(User.Security(i)) then
+              match = True
+              exit for
+            end if
+          next
+          redim IfsecStack(IfsecStackTop+1)
+          IfsecStack(IfsecStackTop) = match
+          inc(IfsecStackTop)
+          if not match then
+            inc(IfsecDisable)
+          end if
+        elseif left(s, 6) = "@ELSE@" then
+          if IfsecStackTop > 0 then
+            if IfsecStack(IfsecStackTop-1) then
+              inc(IfsecDisable)
+            else
+              dec(IfsecDisable)
+            end if
+            IfsecStack(IfsecStackTop-1) = not IfsecStack(IfsecStackTop-1)
+          end if
+        elseif left(s, 7) = "@ENDIF@" then
+          if IfsecStackTop > 0 then
+            if not IfsecStack(IfsecStackTop-1) then
+              dec(IfsecDisable)
+            end if
+            dec(IfsecStackTop)
+          end if
+        elseif IfsecDisable = 0 then
+          print #outf, ExpandDisplayMacros(s)
+        end if
+      loop
+      close #outf
+    end if
+    close #inf
+  end if
+end sub
+
+sub CopyDisplayFiles(byval destpath as string)
+  if User.ProfileInt("IncludeNewBulletins") then
+    dim ff as TFindFileData
+    if FindFirst("wc:\bull\conf(0)\*.bbs", ff) then
+      do
+        if lcase(left(ff.FileName, 4)) = "bull" then
+          dim n as integer
+          n = val(mid(ff.FileName, 5))
+          if n > 0 then
+            dim ft as DateTime
+            FileTimeToLocalFileTime(ff.LastWriteTime, ft)
+            if CompareDateTime(ft, User.LastCall) > 0 then
+              CopyDisplayFile("wc:\bull\conf(0)\"+ff.FileName, destpath+"blt-0."+str(n))
+            end if
+          end if
+        end if
+      loop while FindNext(ff)
+    end if
+  end if
+  CopyDisplayFile("wc:\disp\prelog.bbs", destpath+"hello")
+  for n = 1 to 9
+    CopyDisplayFile("wc:\disp\hello"+str(n)+".bbs", destpath+"hello")
+  next
+  dim dt as DateTime
+  if WcGetFileTimeByName("wc:\disp\newsltr.bbs", dt) then
+    dim ldt as DateTime
+    FileTimeToLocalFileTime(dt, ldt)
+    if CompareDateTime(ldt, User.LastCall) > 0 then
+      CopyDisplayFile("wc:\disp\newsltr.bbs", destpath+"bbsnews")
+    end if
+  end if
+  CopyDisplayFile("wc:\disp\goodbye.bbs", destpath+"goodbye")
+end sub
+
+sub CreateNewFiles(byval fn as string)
+  if User.ProfileInt("IncludeNewFiles") then
+    print [QwkCollectingFiles "Collecting new files: "];
+    UpdateNewFilesDate
+    dim totalfiles as integer
+    totalfiles = 0
+    dim outf as integer = -1
+    dim tid as integer
+    dim area as integer
+    area = GetFirstFileArea(0, 0)
+    do while area > 0
+      dim fa as TFileArea
+      GetFileArea(area, fa)
+      if not fa.ExcludeFromNewFiles then
+        dim f as TFileRecord
+        if SearchFileRecByAreaDate(area, User.LastNewFiles, f, tid) then
+          if f.area = area then
+            if outf <= 0 then
+              outf = open fn for output
+              if outf <= 0 then
+                exit sub
+              end if
+            end if
+            print #outf,
+            print #outf, "***** Area "; area; ": "; fa.name
+            print #outf,
+            do
+              GlobalFileRecord = f
+              print #outf, ExpandDisplayMacros(GetText("wc:\disp\filehdr1.bbs"))
+              inc(totalfiles)
+            loop while GetNextFileRec(FileAreaDateKey, f, tid) and f.area = area
+          end if
+        end if
+      end if
+      area = GetNextFileArea(0, 0, area)
+    loop
+    if outf > 0 then
+      close #outf
+    end if
+    print totalfiles
+  end if
+end sub
+
+sub Zip(byval zname as string, byval files as string)
+  Exec("zip -j -k "+zname+" "+files, True, SW_SHOWMINNOACTIVE)
+end sub
+
+type TYourMsg
+  conf as integer
+  id as integer
+end type
+
+//---------------------------------------------------------------------
+// MAIN BLOCK
+//---------------------------------------------------------------------
+
+dim args as string = paramstr(1)
+dim cmd as string = getparamstr(args,"cmd")
+
+dim msg  as TMsgHeader
+dim conf as integer
+dim id   as integer
+dim fv   as integer
+
+dim pktfn as string = TempPath()+Makewild.PacketId+".qwk"
+
+if lcase(cmd) = "download" then
+   if not exists(TempPath()+Makewild.PacketId+".qwk") then
+      print "No Packet"
+      end
+   end if
+
+   dim disp as string = "filename="+chr(34)+JustFileName(pktfn)+chr(34)
+   httpSetResponseHeader("Content-type","application/octet-stream")
+   HttpSetResponseHeader("Content-disposition", disp)
+   PrintFile(pktfn)
+
+   fv = open pktfn + ".lr" for input
+   if fv > 0 then
+      do while not eof(fv)
+        dim sLine as string
+        dim stype as string
+
+        input #fv, sline
+
+        stype = ucase(firstword(sline))
+        conf  = val(firstword(sline))
+        id    = val(sline)
+
+#if 0
+        select case(stype)
+          case "NP"
+              if id > 0 then SetLastRead(conf, id)
+          case "YM"
+              if GetMessageById(conf, id, msg) then
+                if not msg.Received then
+                   MarkMessageRead(msg)
+                   if msg.ReceiptRequested then SendReturnReceipt(msg)
+                end if
+              end if
+        end select
+#endif
+
+      loop
+      close(fv)
+   end if
+   end
+end if
+
+if lcase(cmd) = "scan" then
+   dim TotalMsgCount as integer
+   dim YourMsgCount as integer
+   dim MaxMsgPerPacket as integer = User.ProfileInt("MaxMsgPerPacket")
+   dim MaxMsgPerConf as integer = User.ProfileInt("MaxMsgPerConf")
+   dim DownloadYourMail as boolean = User.ProfileInt("DownloadYourMail") <> 0
+   dim YourMsgs(YourMsgCount) as TYourMsg
+   dim NewLastRead(GetConferenceCount-1) as integer
+   dim AbortFlag as boolean
+   dim mcb as TMCB
+
+   DefaultOfflineSettings(User)
+
+   del TempPath()+Makewild.PacketId+".qwk"
+   if exists(TempPath()+Makewild.PacketId+".qwk") then
+     print [QwkAlreadyExists "There is already a QWK packet present and in use. Try again later."]
+     print
+     end
+   end if
+
+   if not QwkOpen(TempPath()+Makewild.PacketId+".qwk", User.ProfileInt("SmallControlDat")) then
+     print "QwkOpen failed"
+     end
+   end if
+
+   dim pointerfile as integer = open TempPath()+"qwk\"+Makewild.PacketId+".ptr" for output
+
+   if pointerfile < 0 then
+     print "Error opening ";TempPath();"qwk\";Makewild.PacketId;".ptr"
+     print
+     WaitEnter
+     end
+   end if
+
+   if MaxMsgPerPacket = 0 then  MaxMsgPerPacket = 1000
+   if MaxMsgPerConf = 0   then  MaxMsgPerConf   = 200
+
+   dim mpp as integer, mpc as integer
+   GetQwkBaudLimits(mpp, mpc)
+   if MaxMsgPerPacket > mpp then MaxMsgPerPacket = mpp
+   if MaxMsgPerConf > mpc   then MaxMsgPerConf = mpc
+
+   print [QwkPreparing1 "@N@Preparing mail packet..."]
+   print
+   print [QwkTotalMessages "@N@     Total message limit: @T@"]; MaxMsgPerPacket
+   print [QwkTotalPerConf  "@N@Conference message limit: @T@"]; MaxMsgPerConf
+   print [QwkHeader1 "@N@                                          High    Last  Number     To"]
+   print [QwkHeader2 "@N@ Number  Conference                    Message    Read   Found    You  Attach"]
+   print [QwkHeader3 "@F@------------------------------------------------------------------------------"]
+
+   TotalMsgCount = 0
+   YourMsgCount = 0
+   AbortFlag = False
+
+   InitMCB(mcb)
+   mcb.ConfMode = cmSelected
+   mcb.ReadMode = rmDefault
+   if ReadFirstConference(mcb) then
+     do while TotalMsgCount < MaxMsgPerPacket and not AbortFlag
+       print #pointerfile, mcb.Conf.Number; ","; GetLastRead(mcb.Conf.Number)
+       SubText(1) = str(mcb.Conf.Number)
+       SubText(2) = mcb.Conf.Name
+       SubText(3) = "   "
+       SubText(4) = str(GetHighMessageNumber(mcb.Conf.Number))
+       SubText(5) = str(GetMsgNumberFromId(mcb.Conf.Number, GetLastRead(mcb.Conf.Number)))
+       dim printed as boolean = False
+       if (GetConfFlags(mcb.Conf.Number) and ucstMask) = ucstAll then
+         print "@F@@SUB1>6@   @N@@SUB2:27@@F@@SUB3@@T@@SUB4>7@@SUB5>8@";
+         printed = True
+       end if
+       dim ConfMsgCount as integer
+       dim YourConfMsgCount as integer
+       dim ConfAttachSize as integer
+       dim flags as integer = GetConfFlags(mcb.Conf.Number)
+       ConfMsgCount = 0
+       YourConfMsgCount = 0
+       ConfAttachSize = 0
+       NewLastRead(mcb.Conf.Number) = GetMsgIdFromNumber(mcb.Conf.Number, GetHighMessageNumber(mcb.Conf.Number))
+       if ReadFirstMessage(mcb, msg) then
+         do
+           dim getit as boolean
+           if GetObjectFlags(OBJECTID_QWK_NETSTATUS) then
+             getit = str(User.Info.Id) <> msg.Network
+           else
+             getit = msg.From.Id <> User.Info.Id or DownloadYourMail
+           end if
+           if getit then
+             if not printed then
+               print "@F@@SUB1>6@   @N@@SUB2:27@@F@@SUB3@@T@@SUB4>7@@SUB5>8@";
+               printed = True
+             end if
+             dim includeatt as boolean = msg.To.Id = User.Info.Id or (flags and ucfAllAttach) <> 0
+             dim attachsize as integer = 0
+             if includeatt then
+               dim f as integer = open "wc:\conf("+str(msg.Conference)+")\message("+str(msg.Id)+")\attach" for input
+               if f > 0 then
+                 attachsize = lof(f) div 1024
+                 includeatt = attachsize <= User.ProfileInt("MaxAttachSize")
+                 close #f
+               end if
+             end if
+             QwkAddMessage(msg, includeatt)
+             if msg.To.Id = User.Info.Id then
+               if YourMsgCount > high(YourMsgs) then
+                 redim YourMsgs(high(YourMsgs)+10)
+               end if
+               YourMsgs(YourMsgCount).conf = mcb.Conf.Number
+               YourMsgs(YourMsgCount).id = msg.Id
+               inc(YourConfMsgCount)
+               inc(YourMsgCount)
+             end if
+             NewLastRead(mcb.Conf.Number) = msg.Id
+             inc(ConfMsgCount)
+             inc(TotalMsgCount)
+             if includeatt then
+               ConfAttachSize = ConfAttachSize + attachsize
+             end if
+             if TotalMsgCount >= MaxMsgPerPacket or ConfMsgCount >= MaxMsgPerConf then
+               exit do
+             end if
+           end if
+           if inkey = chr(3) then
+             if ConfMsgCount = 0 then
+               // we didn't find anything, so don't zap to the top since we may have skipped some
+               NewLastRead(mcb.Conf.Number) = 0
+             end if
+             AbortFlag = True
+           end if
+         loop while ReadNextMessage(mcb, msg) and not AbortFlag
+       end if
+       if printed then
+         SubText(1) = str(ConfMsgCount)
+         SubText(2) = str(YourConfMsgCount)
+         if ConfAttachSize > 0 then
+           SubText(3) = str(ConfAttachSize)
+           print "@SUB1>8@@SUB2>7@@SUB3>7@K"
+         else
+           print "@SUB1>8@@SUB2>7@"
+         end if
+         if GetObjectFlags(OBJECTID_QWK_DETAIL_DOWNLOAD) and ConfMsgCount > 0 then
+           WriteActivityLogEntry("      * "+str(ConfMsgCount)+" messages in "+str(mcb.Conf.Number)+" - "+mcb.Conf.Name)
+         end if
+       end if
+       if not ReadNextConference(mcb) then
+         exit do
+       end if
+     loop
+   end if
+   if TotalMsgCount >= MaxMsgPerPacket then
+     print
+     print [QwkScanTerminatedCount "@E@Scan terminated due to total message count limit."]
+   end if
+   if AbortFlag and not InputYesNo([QwkScanTerminatedUser "@N@Scan terminated.  Continue with download anyway"], True) then
+     print
+     print [QwkScanAborted "Message scan aborted."]
+     close #pointerfile
+     QwkClose()
+     end
+   end if
+   print
+   SubText(1) = str(TotalMsgCount)
+   SubText(2) = str(YourMsgCount)
+   if YourMsgCount > 0 then
+     print [QwkTotalMessagesPersonal "@N@Total messages found: @SUB1@ (@SUB2@ to you)"]
+   else
+     print [QwkTotalMesages "@N@Total messages found: @SUB1@"]
+   end if
+   CopyDisplayFiles(TempPath()+"qwk\")
+   CreateNewFiles(TempPath()+"qwk\newfiles.dat")
+   close #pointerfile
+   QwkClose()
+   ResetIdleTimer()
+
+   print
+   if TotalMsgCount = 0 then
+     print [QwkNothingFound "@E@Nothing found to download."]
+     print
+     end
+   end if
+
+   print [QwkCompressing "@N@Compressing @SUB1@.QWK, please wait..."];
+
+   SubText(1) = Makewild.PacketId
+   Zip(TempPath()+Makewild.PacketId+".qwk", TempPath()+"qwk\*")
+   if not Exists(TempPath()+Makewild.PacketId+".qwk") then
+     print [QwkCompressError "There was a problem compressing your QWK packet."]
+     print
+     end
+   end if
+
+   print [QwkUpdatingPointers "@N@Saving last read pointers..."]
+   fv = open pktfn+".lr" for output
+   if (fv > 0) then
+       conf = GetConferenceCount()-1
+       do while conf >= 0
+         if NewLastRead(conf) > 0 then
+            print #fv, "NP ";conf;" ";NewLastRead(conf)
+         end if
+         dec(conf)
+       loop
+       if YourMsgCount > 0 then
+         dim i as integer
+         for i = 0 to YourMsgCount-1
+           print #fv, "YM ";YourMsgs(i).conf;" ";YourMsgs(i).id
+         next i
+       end if
+       close(fv)
+   end if
+   end
+end if
+
+print "args: [";args;"]"
+print "no cmd provided"
+end

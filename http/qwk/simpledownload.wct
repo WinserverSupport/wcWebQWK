@@ -1,0 +1,16 @@
+@if 0@
+@runwcx "download qwk mail"@
+@module utl redirect /file/node/{SYSTEM.PACKETID}.QWK@
+@exit@
+@endif@
+
+@if 0@ @//@ single
+<h3>Scanning and Packing QWK Mail</H3>
+<pre>
+@runwcx "download qwk mail"@
+@set qwk.packet = system.packetid".QWK"@
+</pre>
+Download <a href="/file/node/@sub qwk.packet@">@sub qwk.packet@</a>
+@exit@
+@endif@
+

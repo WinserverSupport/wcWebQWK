@@ -1,0 +1,132 @@
+@comment@
+---------------------------------------------------------------
+File : /qwk/qwkdownload.wct
+About:
+
+WCT macro script to use the existing text based WCX
+application "Download QWK mail" to scan and download
+a QWK packet.
+---------------------------------------------------------------
+@endcomment@
+
+@set qwk.packet = SYSTEM.PACKETID".qwk"@
+
+<html>
+<title>Download QWK</title>
+<head>
+<style>
+  body { margin: 2%;}
+  pre.qwk{
+    padding: 4px; border: 3px outset black;
+    background: navy;  color: yellow;
+    visibility: hidden;
+  }
+  hr.bar   { margin:0; height: 5px; background: green;}
+  h4.total { color: White;}
+  h4.note  { border: 1px solid black; background: yellow; color: black;}
+</style>
+
+<script>
+ function ColorizeQWKScan()
+ {
+    var $t = document.getElementById("qwkText");
+    if ($t) {
+       var $snew = "";
+       var $s = $t.innerHTML.split("\n");
+     	 for(var i=0;i < $s.length;i++) {
+   		var c = $s[i];
+         if (c.length == 0) continue;
+         if (c.indexOf("Press") == 0) continue;
+         if (c.indexOf("Transfer") == 0) continue;
+         if (c.indexOf("Preparing") == 0) continue;
+         if (c.indexOf("Compressing") == 0) continue;
+         if (c.charAt(0) == '-') {
+            c = "<hr class='bar'>";
+            $snew += c;
+            continue;
+         }
+         if (c.indexOf("Total") == 0) {
+             c = "<hr class='bar'><h4 class='total'>"+c+"</h4>";
+             $snew += c;
+             continue;
+         }
+         $snew += c;
+         $snew += "<br>";
+     	 }
+       $t.innerHTML = $snew;
+       $t.style.visibility = "visible";
+    }
+ }
+ function ajaxDownload()
+ {
+    var url = "/code/html-wcqwk?cmd=download";
+    var x;
+    if (window.ActiveXObject) {
+       x = new ActiveXObject("Microsoft.XMLHTTP");
+    } else {
+       x = new XMLHttpRequest();
+    }
+    if (x) {
+       x.onreadystatechange = function()
+       {
+         if (x.readyState == 4 && x.status == 200) {
+            var el = document.getElementById("note");
+            if (el) {
+               el.innerHTML = "Packet sent, Last Pointers Saved!"
+            }
+         }
+       }
+       x.open("GET", url,true);
+       x.send(null);
+    }
+ }
+ function frameDownloadComplete()
+ {
+    var el = document.getElementById("note");
+    if (el) el.innerHTML = "Packet sent, Last Pointers Saved!"
+ }
+ function frameDownload()
+ {
+    var url = "/code/html-wcqwk?cmd=download";
+    var el = document.getElementById("qwkframe");
+    if (el) el.src = url;
+    frameDownloadComplete();
+ }
+</script>
+
+</head>
+<body>
+
+<center>
+<h3>Scanning and Packing QWK Mail</H3>
+</center>
+
+<pre id="qwkText" class="qwk">
+@runwcx "html-wcqwk" "cmd=scan"@
+</pre>
+
+<center>
+<h4>
+<button onClick="ajaxDownload();">(Ajax)Download @sub qwk.packet@</button>&nbsp;
+Download <a href="/code/html-wcqwk?cmd=download">@sub qwk.packet@</a>&nbsp;
+<button onClick="frameDownload();">Download @sub qwk.packet@</button>&nbsp;
+</h4>
+
+<iframe id="qwkframe" src=""
+        @//@onload="frameDownloadComplete();"
+        style="display: none;">
+</iframe
+
+<h4 id="note" class="note">
+Note: The packet will not be available if you idle off the system.
+So download it now.
+</h4>
+</center>
+
+<script>
+ ColorizeQWKScan();
+</script>
+
+</body>
+<html>
+
